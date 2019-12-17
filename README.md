@@ -1,0 +1,2 @@
+# NZSU
+Netezza Server Utility
