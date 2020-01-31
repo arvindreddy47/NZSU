@@ -9,6 +9,9 @@ library(plotly)
 library(ggplot2)
 library(RODBC)
 library(flexdashboard)
+library(plyr)
+library(dplyr)
+library(shinyBS)
 
 # Main login screen
 loginpage <- div(id = "loginpage", style = "width: 500px; max-width: 100%; margin: 0 auto; padding: 20px;",
@@ -94,7 +97,9 @@ server <- function(input, output, session) {
                 sidebarSearchForm(textId = "searchText", buttonId = "searchButton",
                                   label = "Search..."),
                 menuItem("HOME", tabName = "dashboard", icon = icon("home"),selected = TRUE),
-                menuItem("VISUALS", tabName = "page3", icon = icon("dashboard")),
+                menuItem("VISUALS", tabName = "page3", icon = icon("bar-chart-o"),
+                         menuSubItem("CHARTS", tabName = "subitem1", icon = icon("bar-chart-o") ),
+                         menuSubItem("SCHEMA GRAPHS", tabName = "subitem2", icon = icon("bar-chart-o") )),
                 menuItem("DATA TABLE", tabName = "extra", icon = icon("table")),
                 selectInput("select", "Schema",
                             c("ATLAS_NA_WRK_DEV","ATLAS_NA_DM_LNDG_DEV1","ATLAS_NA_DM_LNDG_DEV"),selected = TRUE),
@@ -121,10 +126,10 @@ server <- function(input, output, session) {
                                 #h6("statement executed!"),
                                 textOutput("TEXTOUT"),
                                 actionButton("Submit", "Exectute Query"))
-                            #submitButton("Submit"))
+                            
                         ),
                         fluidRow(box(h3("Total Count:"),
-                            infoBox(title = "" ,value =  455 , icon = icon("list"),subtitle = "TABLES"),
+                            infoBox(title = "" ,value =  455 , icon = icon("list"),subtitle = "TABLES",color = "navy"),
                             width = 3,height = 200, collapsible = TRUE,status = "warning"),
                             box(h3("Percentage of Space Occupied:"),
                                 gauge("45%",
@@ -134,24 +139,61 @@ server <- function(input, output, session) {
                                                    warning = c(50.1,70),
                                                    danger =  c(70.1,100),
                                                    colors = c("green", "yellow", "red"))),width = 9,
-                                height = 200,collapsible = TRUE,status = "warning")
-                        ) ) 
+                                height = 200,collapsible = TRUE,status = "primary")
+                        )
+                        ,fluidRow(
+                            box(
+                                h3("Current User:"),
+                                infoBox(title = "" ,value =  "ARREDD" , icon = icon("user"),width = 3,color = "green"),
+                                width = 3,height = 200, collapsible = TRUE,status = "warning")
+                                )) 
                 ,
-                tabItem(tabName ="page3", #class = "active",
-                        #h3("TOP TABLES OCCUPYING SPACE:"),
-                        #fluidRow(#box(width = 11,collapsible = TRUE,height = 200,
-                                     #title = "Table VS % Space",
-                                     #color = "red", ribbon = TRUE, title_side = "top right",
-                                     #column(width = 9, 
-                                            plotlyOutput("scatterplot")
+                tabItem(tabName ="subitem1",
+                            plotlyOutput("scatterplot")
                                      #)
                         #))#,box(h5("Description"),textOutput("desc"))
                 #)
                 ),
+                tabItem(tabName ="subitem2",
+                          #plotlyOutput("scatterplot")
+                    h3("HEY")
+                    #,plotlyOutput("bar")
+                ),
                 tabItem(
                     tabName = "extra",
-                    fluidRow(#box(#h4("Interactive Data Table"),
-                        dataTableOutput('carstable')
+                    # fluidRow(#box(#h4("Interactive Data Table"),
+                    #     dataTableOutput('carstable'),
+                        fluidPage(
+                            box(width=12,
+                                h3(strong(paste("List of tables in",input$select)), style="text-align:center;color:#0000ff;font-size:150%"),
+                                hr(),
+                                helpText("You can select rows by clicking on them. After you select a couple of rows, you can drop the tables that you wish to by clicking the drop button at the bottom",
+                                         style="text-align:center"),
+                                br(),
+                                column(12,DT::dataTableOutput('carstable'))),
+                            br(),br(),br(),
+                            box(width = 12,
+                                column(12, h4(helpText("To drop tables start selecting & hit the button below",style="text-align:center")),hr()),
+                                column(1,
+                                       actionButton("compare", "DROP", style="text-align:center;color: #0000ff; font-size:120%"),
+                                       bsTooltip("compare", "Shows an animation modal window on the selected tables.",
+                                                 "right", options = list(container = "body")))
+                                # column(2, 
+                                #        actionButton("show_all", "Show All", style="text-align:center;color:#996600; font-size:120%")),
+                                # bsTooltip("show_all", "Shows countries that were hidden",
+                                #           "right", options = list(container = "body"))
+                                
+                            )
+                        
+                    ),br(),
+                    bsModal("modalExample", strong("Selected Tables", style="color:#0000ff; font-size:120%"), "compare", size = "large",
+                            h4("Table Name:"),
+                            textOutput("SHINY"),
+                            div(style="display: inline-block;vertical-align:top; width: 200px;", 
+                                actionButton('Submit_drop',"Submit"),
+                                bsTooltip("Submit_drop", "You can click this if you want to drop the tables for the selected item(s).",
+                                          "right", options = list(container = "body"))
+                            )
                     )
                 )
             )
@@ -306,21 +348,64 @@ server <- function(input, output, session) {
             layout(annotations = CNT_2)
     })
     
-    output$carstable <- renderDataTable({
-    #Connection<- odbcConnect(input$select, uid = input$userName, pwd = input$passwd, believeNRows= FALSE)
-     db_data<- sqlQuery(Connection(),"SELECT *, ROUND(SUM(NVL(used_bytes,0)/pow(1024,3))OVER(PARTITION BY DATABASE ORDER BY DATABASE),2) AS TOTAL_SPACE_USED FROM (
+    db_data<- reactive({
+        
+        db_data<- data.frame(sqlQuery(Connection(),"SELECT *, ROUND(SUM(NVL(used_bytes,0)/pow(1024,3))OVER(PARTITION BY DATABASE ORDER BY DATABASE),2) AS TOTAL_SPACE_USED FROM (
 	select DATABASE,SRC.TABLENAME,NVL(USED_BYTES,0) AS USED_BYTES,NVL(ROUND(NVL(used_bytes,0)/pow(1024,3),2),0) as used_SPACE
 	--,sum(NVL(ALLOCATED_BYTES,0)/pow(1024,3)) as total_size
     from _v_table_storage_stat SRC
     JOIN _V_TABLE TGT ON SRC.OBJID=TGT.OBJID
-    GROUP BY DATABASE,SRC.TABLENAME,USED_BYTES) X")
-    datatable(db_data,
+    GROUP BY DATABASE,SRC.TABLENAME,USED_BYTES) X"))
+        })
+#     #Connection_schema <- reactive( odbcConnect(ifelse(is.null(input$select),"ATLAS_NA_WRK_DEV",input$select), uid = input$userName, pwd = input$passwd, believeNRows= FALSE))
+#     Connection_schema <- odbcConnect("ATLAS_NA_WRK_DEV", uid = "ARREDD", pwd = "ARREDD", believeNRows= FALSE)
+#     db_data<- sqlQuery(Connection_schema,"SELECT *, ROUND(SUM(NVL(used_bytes,0)/pow(1024,3))OVER(PARTITION BY DATABASE ORDER BY DATABASE),2) AS TOTAL_SPACE_USED FROM (
+# 	select DATABASE,SRC.TABLENAME,NVL(USED_BYTES,0) AS USED_BYTES,NVL(ROUND(NVL(used_bytes,0)/pow(1024,3),2),0) as used_SPACE
+# 	--,sum(NVL(ALLOCATED_BYTES,0)/pow(1024,3)) as total_size
+#     from _v_table_storage_stat SRC
+#     JOIN _V_TABLE TGT ON SRC.OBJID=TGT.OBJID
+#     GROUP BY DATABASE,SRC.TABLENAME,USED_BYTES) X")
+   # vals<-reactiveValues()
+   #  vals$db_data<- db_data
+        output$carstable <- renderDataTable({
+        #Connection<- odbcConnect(input$select, uid = input$userName, pwd = input$passwd, believeNRows= FALSE)
+#         db_data<- sqlQuery(Connection(),"SELECT *, ROUND(SUM(NVL(used_bytes,0)/pow(1024,3))OVER(PARTITION BY DATABASE ORDER BY DATABASE),2) AS TOTAL_SPACE_USED FROM (
+# 	select DATABASE,SRC.TABLENAME,NVL(USED_BYTES,0) AS USED_BYTES,NVL(ROUND(NVL(used_bytes,0)/pow(1024,3),2),0) as used_SPACE
+# 	--,sum(NVL(ALLOCATED_BYTES,0)/pow(1024,3)) as total_size
+#     from _v_table_storage_stat SRC
+#     JOIN _V_TABLE TGT ON SRC.OBJID=TGT.OBJID
+#     GROUP BY DATABASE,SRC.TABLENAME,USED_BYTES) X")
+        
+        datatable(db_data(),
                   caption = "Space Occupied",
                   rownames = T,
                   filter = "top",
-                  extensions = "Buttons",
+                  extensions = "Buttons",#selection = 'single',
                   options= list (dom = 'Bfrtip', buttons = list('copy','csv','pdf')), list(pageLength = 1000))
+        
+        
     })
+    selected_tables = reactive({
+        x = isolate(db_data())
+        x = as.character(x[input$carstable_rows_selected,]$TABLENAME)
+        
+        
+    })
+    output$SHINY<-renderText({
+        selected_tables()
+    })
+    observeEvent(input$Submit_drop,
+                 {    XYZ<- data.frame(Tables = selected_tables())
+                 XYZ<-paste("DROP TABLE"," ",XYZ$Tables,";",sep = "")
+                 XYZ<- paste(unlist(XYZ),collapse = " ")
+                 print(XYZ)
+                     #print(paste("DROP TABLE"," ",selected_tables(),";",sep = ""))
+                     #print(paste("DROP TABLE"," ",as.character(selected_tables()),";",sep = ""))
+                     z<-sqlQuery(Connection(),XYZ)
+                     print(z)
+                 })
+    
+    
     
     selected_trends <- reactive({
         req(input$select)
@@ -341,4 +426,4 @@ server <- function(input, output, session) {
     
 }
 
-runApp(list(ui = ui, server = server))
+runApp(list(ui = ui, server = server),launch.browser = TRUE)
